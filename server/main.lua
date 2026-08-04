@@ -1,50 +1,67 @@
 local QBCore = exports['qb-core']:GetCoreObject()
 
--- Command to open the creator management panel manually if needed
+-- Discord Webhook Audit Logging (Optional: Add your webhook URL here)
+local WebhookURL = "" 
+
+local function SendDiscordLog(title, message, color)
+    if WebhookURL == "" then return end
+    local embed = {
+        {
+            ["title"] = title,
+            ["description"] = message,
+            ["type"] = "rich",
+            ["color"] = color or 3447003,
+            ["footer"] = { ["text"] = "JobCreatorQBCORE by AlexVasquez" },
+            ["timestamp"] = os.date("!%Y-%m-%dT%H:%M:%SZ")
+        }
+    }
+    PerformHttpRequest(WebhookURL, function(err, text, headers) end, 'POST', json.encode({username = "Job System Logs", embeds = embed}), { ['Content-Type'] = 'application/json' })
+end
+
 RegisterCommand('jobcreator', function(source, args, rawCommand)
     local src = source
     local Player = QBCore.Functions.GetPlayer(src)
     if Player and Player.PlayerData.job.isboss then
         TriggerClientEvent('JobCreatorQBCORE:client:openDashboard', src)
     else
-        TriggerClientEvent('QBCore:Notify', src, 'You must be a boss to use this command!', 'error')
+        TriggerClientEvent('QBCore:Notify', src, 'Access Denied: Boss authorization required.', 'error')
     end
 end, false)
 
--- Boss buying shop items from society funds
 RegisterNetEvent('JobCreatorQBCORE:server:buyShopItem', function(jobName, itemName, amount)
     local src = source
     local Player = QBCore.Functions.GetPlayer(src)
     local jobConfig = Config.Jobs[jobName]
 
-    if not jobConfig then return end
+    if not jobConfig or not Player then return end
 
     if Player.PlayerData.job.name == jobName and Player.PlayerData.job.isboss then
         local itemPrice = 0
+        local itemLabel = itemName
         for _, item in ipairs(jobConfig.shopItems) do
             if item.name == itemName then
                 itemPrice = item.price * amount
+                itemLabel = item.label
                 break
             end
         end
 
         if itemPrice > 0 then
-            -- Deduct from society fund via qb-bossmenu / banking accounts
             TriggerEvent('qb-bossmenu:server:removeAccountMoney', jobConfig.societyAccount, itemPrice, function(success)
                 if success then
                     exports['qb-inventory']:AddItem(src, itemName, amount, nil, true, 'Job Store Order')
-                    TriggerClientEvent('QBCore:Notify', src, 'Successfully purchased '..amount..'x '..itemName, 'success')
+                    TriggerClientEvent('QBCore:Notify', src, 'Purchased '..amount..'x '..itemLabel, 'success')
+                    SendDiscordLog("Store Restock", "**Boss:** " .. Player.PlayerData.charinfo.firstname .. " " .. Player.PlayerData.charinfo.lastname .. "\n**Job:** " .. jobName .. "\n**Item:** " .. itemLabel .. " (x" .. amount .. ")\n**Cost:** $" .. itemPrice, 65280)
                 else
-                    TriggerClientEvent('QBCore:Notify', src, 'Insufficient funds in society account!', 'error')
+                    TriggerClientEvent('QBCore:Notify', src, 'Society fund balance is too low!', 'error')
                 end
             end)
         end
     else
-        TriggerClientEvent('QBCore:Notify', src, 'Unauthorized access to society funds.', 'error')
+        TriggerClientEvent('QBCore:Notify', src, 'Unauthorized operation.', 'error')
     end
 end)
 
--- Armory rank and purchase checks for PD/EMS
 RegisterNetEvent('JobCreatorQBCORE:server:buyArmoryItem', function(jobName, itemName, amount)
     local src = source
     local Player = QBCore.Functions.GetPlayer(src)
@@ -67,47 +84,18 @@ RegisterNetEvent('JobCreatorQBCORE:server:buyArmoryItem', function(jobName, item
             local totalPrice = selectedItem.price * amount
             TriggerEvent('qb-bossmenu:server:removeAccountMoney', jobConfig.societyAccount, totalPrice, function(success)
                 if success then
-                    exports['qb-inventory']:AddItem(src, itemName, amount, nil, true, 'Department Armory')
-                    TriggerClientEvent('QBCore:Notify', src, 'Acquired '..selectedItem.label, 'success')
+                    exports['qb-inventory']:AddItem(src, itemName, amount, nil, true, 'Department Armory Requisition')
+                    TriggerClientEvent('QBCore:Notify', src, 'Requisitioned '..selectedItem.label, 'success')
                 else
-                    TriggerClientEvent('QBCore:Notify', src, 'Department budget is empty!', 'error')
+                    TriggerClientEvent('QBCore:Notify', src, 'Department budget allocation failed.', 'error')
                 end
             end)
         else
-            TriggerClientEvent('QBCore:Notify', src, 'Your rank is too low to requisition this item.', 'error')
+            TriggerClientEvent('QBCore:Notify', src, 'Insufficient security clearance level.', 'error')
         end
     end
 end)
 
--- Crafting validation & inventory swap
-RegisterNetEvent('JobCreatorQBCORE:server:craftItem', function(jobName, recipeIndex)
-    local src = source
-    local Player = QBCore.Functions.GetPlayer(src)
-    local jobConfig = Config.Jobs[jobName]
-    local recipe = jobConfig.craftingRecipes[recipeIndex]
-
-    if not recipe then return end
-
-    local canCraft = true
-    for _, ing in ipairs(recipe.cost) do
-        if not exports['qb-inventory']:HasItem(src, ing.name, ing.count) then
-            canCraft = false
-            break
-        end
-    end
-
-    if canCraft then
-        for _, ing in ipairs(recipe.cost) do
-            exports['qb-inventory']:RemoveItem(src, ing.name, ing.count)
-        end
-        exports['qb-inventory']:AddItem(src, recipe.result, 1)
-        TriggerClientEvent('QBCore:Notify', src, 'Crafted '..recipe.label..' successfully!', 'success')
-    else
-        TriggerClientEvent('QBCore:Notify', src, 'Missing required ingredients.', 'error')
-    end
-end)
-
--- Dynamic Stash Routing (Shared Store vs Boss Employee Review)
 RegisterNetEvent('JobCreatorQBCORE:server:openStash', function(jobName, stashType, targetCitizenId)
     local src = source
     local Player = QBCore.Functions.GetPlayer(src)
