@@ -30,6 +30,6 @@ files {
 
 dependencies {
     'qb-core',
-    'ox_target',
+    'qb-target', -- changed from ox_target
     'qb-inventory'
 }
